@@ -24,7 +24,7 @@ pd.set_option('precision', 5)
 pd.set_option('display.float_format', lambda x: '%.5f' % x)
 pd.set_option('max_colwidth', 200)
 pd.set_option('display.width', 5000)
-
+from tqdm import tqdm
 import lightgbm as lgb
 from sklearn.model_selection import KFold
 from sklearn.metrics import mean_squared_error,mean_absolute_error
@@ -445,6 +445,27 @@ if __name__ == "__main__":
     for var in ['name_len','model']:
         fe1=data.loc[~data['price'].isna()].groupby(var)['price'].mean().rename('{}_price_mean'.format(var)).reset_index()
         data=data.merge(fe1,on=var,how='left')
+
+    ### 类别特征的二阶交叉
+    from scipy.stats import entropy
+    for f_pair in tqdm([
+        ['model', 'brand'], ['model', 'regionCode'], ['brand', 'regionCode']]):
+        ### 共现次数
+        data['_'.join(f_pair) + '_count'] = data.groupby(f_pair)['SaleID'].transform('count')
+        ### n unique、熵
+        data = data.merge(data.groupby(f_pair[0], as_index=False)[f_pair[1]].agg({
+            '{}_{}_nunique'.format(f_pair[0], f_pair[1]): 'nunique',
+            '{}_{}_ent'.format(f_pair[0], f_pair[1]): lambda x: entropy(x.value_counts() / x.shape[0])
+        }), on=f_pair[0], how='left')
+        data = data.merge(data.groupby(f_pair[1], as_index=False)[f_pair[0]].agg({
+            '{}_{}_nunique'.format(f_pair[1], f_pair[0]): 'nunique',
+            '{}_{}_ent'.format(f_pair[1], f_pair[0]): lambda x: entropy(x.value_counts() / x.shape[0])
+        }), on=f_pair[1], how='left')
+        ### 比例偏好
+        data['{}_in_{}_prop'.format(f_pair[0], f_pair[1])] = data['_'.join(f_pair) + '_count'] / data[f_pair[1] + '_count']
+        data['{}_in_{}_prop'.format(f_pair[1], f_pair[0])] = data['_'.join(f_pair) + '_count'] / data[f_pair[0] + '_count']
+
+
 
     train = data.loc[~data['price'].isna()].copy().reset_index(drop=True)
     test = data.loc[data['price'].isna()].copy().reset_index(drop=True)
